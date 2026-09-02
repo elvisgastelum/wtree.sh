@@ -35,14 +35,14 @@ Uninstall leaves the PATH entry in place because it may be used by other tools.
 
 ## Clone
 
-Run `wtree clone` in an empty directory. It creates `.bare` and the first worktree, named after the selected branch.
+Run `wtree clone` in an empty directory. It creates `.bare`, fetches all remote branches as remote-tracking branches, and creates the first worktree from the remote's default branch.
 
 ```bash
 mkdir example && cd example
 wtree clone git@github.com:owner/repository.git
 ```
 
-Specify a branch to skip the interactive branch selector:
+Specify a branch when you do not want the remote default branch:
 
 ```bash
 wtree clone --branch main https://github.com/owner/repository.git
@@ -52,11 +52,21 @@ Options:
 
 ```text
 -b, --branch <name>     First worktree branch.
+    --worktree-dir <path>
+                        First worktree directory (default: branch basename).
     --bare-dir <path>   Bare repository directory (default: .bare).
 -r, --remote <name>     Remote name (default: origin).
 -h, --help              Show help.
 -V, --version           Show the version.
 ```
+
+For a default branch named `dev/MAIN`, the initial worktree is `MAIN/`. Use `--worktree-dir` to override that name:
+
+```bash
+wtree clone --branch dev/MAIN --worktree-dir dev-main <repo-url>
+```
+
+If the remote has no default branch, `wtree` offers its remote branches interactively. Non-interactive callers must pass `--branch` in that case.
 
 ## Worktrees
 

@@ -29,10 +29,10 @@ The result must be `true`. Do not infer the layout only from a worktree's `.git`
 Use the explicit clone command only from an empty target directory:
 
 ```bash
-wtree clone [--branch <name>] [--bare-dir <path>] [--remote <name>] <repo-url>
+wtree clone [--branch <name>] [--worktree-dir <path>] [--bare-dir <path>] [--remote <name>] <repo-url>
 ```
 
-Without `--branch`, it interactively offers `main`, `master`, or `dev`. Supply `--branch` when non-interactive execution is required. Never run `wtree clone` inside an existing repository or worktree.
+Without `--branch`, it uses the remote's default branch. If no default branch is available, it offers the fetched remote branches interactively; supply `--branch` when non-interactive execution is required. The initial worktree directory defaults to the branch basename, so `dev/MAIN` creates `MAIN/`; override it with `--worktree-dir`. Never run `wtree clone` inside an existing repository or worktree.
 
 ## Manage Worktrees
 

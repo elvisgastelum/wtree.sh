@@ -6,7 +6,7 @@ CLAUDE_SKILL := $(HOME)/.claude/skills/wtree
 CLAUDE_COMMAND := $(HOME)/.claude/commands/wtree.md
 OPENCODE_COMMAND := $(HOME)/.config/opencode/command/wtree.md
 
-.PHONY: install uninstall
+.PHONY: install uninstall test
 
 install:
 	./install.sh
@@ -17,3 +17,6 @@ uninstall:
 	@if [ -L "$(CLAUDE_COMMAND)" ] && [ "$$(readlink "$(CLAUDE_COMMAND)")" = "$(ROOT_DIR)/commands/wtree.md" ]; then rm "$(CLAUDE_COMMAND)"; fi
 	@if [ -L "$(OPENCODE_COMMAND)" ] && [ "$$(readlink "$(OPENCODE_COMMAND)")" = "$(ROOT_DIR)/commands/wtree.md" ]; then rm "$(OPENCODE_COMMAND)"; fi
 	@printf 'Removed wtree links owned by %s\n' "$(ROOT_DIR)"
+
+test:
+	bash tests/wtree_test.sh

@@ -2,10 +2,11 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 BARE_DIR=".bare"
 REMOTE="origin"
 BRANCH=""
+WORKTREE_DIR=""
 REPO_URL=""
 
 usage() {
@@ -20,18 +21,21 @@ Commands:
 
 Options:
   -b, --branch <name>     Create the first worktree from this remote branch.
-                           Skips the interactive branch selection.
+                           Defaults to the remote's default branch.
+      --worktree-dir <path>
+                           First worktree directory (default: branch basename).
       --bare-dir <path>   Bare repository directory (default: .bare).
   -r, --remote <name>     Remote name to configure (default: origin).
   -h, --help              Show this help message.
   -V, --version           Show the version.
 
-Without --branch, wtree prompts for an available main, master, or dev branch.
-The first worktree is created in a directory named after the selected branch.
+Without --branch, wtree uses the remote's default branch. If no default branch
+is available, it prompts for a remote branch.
 
 Examples:
   wtree clone git@github.com:owner/repository.git
   wtree clone --branch main https://github.com/owner/repository.git
+  wtree clone --branch dev/MAIN --worktree-dir MAIN <repo-url>
   wtree clone --bare-dir .git-data --remote upstream --branch dev <repo-url>
 EOF
 }
@@ -64,6 +68,16 @@ parse_args() {
             --branch=*)
                 BRANCH="${1#*=}"
                 [[ -n "$BRANCH" ]] || error "Option --branch requires a value."
+                shift
+                ;;
+            --worktree-dir)
+                require_option_value "$1" "${2:-}"
+                WORKTREE_DIR="$2"
+                shift 2
+                ;;
+            --worktree-dir=*)
+                WORKTREE_DIR="${1#*=}"
+                [[ -n "$WORKTREE_DIR" ]] || error "Option --worktree-dir requires a value."
                 shift
                 ;;
             --bare-dir)
@@ -122,17 +136,15 @@ branch_exists() {
 }
 
 select_branch() {
-    local candidates=(main master dev)
     local available=()
-    local candidate choice index
+    local ref branch choice index
 
-    for candidate in "${candidates[@]}"; do
-        if branch_exists "$candidate"; then
-            available+=("$candidate")
-        fi
-    done
+    while IFS= read -r ref; do
+        branch="${ref#refs/remotes/$REMOTE/}"
+        [[ "$branch" == "HEAD" ]] || available+=("$branch")
+    done < <(git for-each-ref --format='%(refname)' "refs/remotes/$REMOTE/")
 
-    [[ ${#available[@]} -gt 0 ]] || error "No main, master, or dev branch exists on remote '$REMOTE'. Use --branch <name>."
+    [[ ${#available[@]} -gt 0 ]] || error "No branches exist on remote '$REMOTE'."
     [[ -t 0 ]] || error "No interactive terminal available. Use --branch <name>."
 
     printf 'Choose the first worktree branch:\n'
@@ -152,18 +164,19 @@ select_branch() {
     done
 }
 
+remote_default_branch() {
+    local remote_head
+
+    remote_head="$(git symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD")" || return 1
+    printf '%s\n' "${remote_head#"$REMOTE/"}"
+}
+
 create_worktree() {
-    local worktree_path="$BRANCH"
+    WORKTREE_DIR="${WORKTREE_DIR:-${BRANCH##*/}}"
 
     branch_exists "$BRANCH" || error "Branch '$BRANCH' does not exist on remote '$REMOTE'."
-    mkdir -p -- "$(dirname "$worktree_path")"
-
-    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-        git worktree add "$worktree_path" "$BRANCH"
-        git branch --set-upstream-to="$REMOTE/$BRANCH" "$BRANCH"
-    else
-        git worktree add --track -b "$BRANCH" "$worktree_path" "$REMOTE/$BRANCH"
-    fi
+    mkdir -p -- "$(dirname "$WORKTREE_DIR")"
+    git worktree add --track -b "$BRANCH" "$WORKTREE_DIR" "$REMOTE/$BRANCH"
 }
 
 main() {
@@ -192,17 +205,21 @@ main() {
     ensure_empty_directory
 
     printf 'Initializing Git worktree setup...\n'
-    git clone --bare --origin "$REMOTE" "$REPO_URL" "$BARE_DIR"
+    git init --bare "$BARE_DIR"
     printf 'gitdir: %s\n' "$BARE_DIR" > .git
+    git remote add "$REMOTE" "$REPO_URL"
     git config "remote.$REMOTE.fetch" "+refs/heads/*:refs/remotes/$REMOTE/*"
-    git fetch "$REMOTE"
+    git fetch --progress --prune "$REMOTE"
+    git remote set-head "$REMOTE" --auto 2>/dev/null || true
 
     if [[ -z "$BRANCH" ]]; then
-        select_branch
+        if ! BRANCH="$(remote_default_branch)"; then
+            select_branch
+        fi
     fi
     create_worktree
 
-    printf 'Setup complete. First worktree: %s/\n' "$BRANCH"
+    printf 'Setup complete. First worktree: %s/ (branch %s)\n' "$WORKTREE_DIR" "$BRANCH"
 }
 
 main "$@"

@@ -5,7 +5,7 @@ description: Clone a repository into a wtree-managed worktree layout. Use as /wt
 Handle this request with the `wtree` CLI. The supported command is:
 
 ```text
-wtree clone [--branch <name>] [--bare-dir <path>] [--remote <name>] <repo-url>
+wtree clone [--branch <name>] [--worktree-dir <path>] [--bare-dir <path>] [--remote <name>] <repo-url>
 ```
 
 The request arguments are: `$ARGUMENTS`
