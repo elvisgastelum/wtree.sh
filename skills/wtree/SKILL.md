@@ -1,6 +1,6 @@
 ---
 name: wtree
-description: Use ONLY for `/wtree` requests or when the current directory is inside a verified wtree clone checkout with an ancestor `.bare` repository. Guides safe multi-worktree feature work, branches, pulls, and pushes.
+description: Use ONLY for `/wtree` requests or when the current directory is inside a verified wtree clone checkout with an ancestor `.bare` repository. Guides worktree selection, loading a worktree's agent configuration, and safe multi-worktree feature work, branches, pulls, and pushes.
 ---
 
 # wtree
@@ -37,9 +37,52 @@ git -C <checkout>/.bare remote -v
 ```
 
 3. Determine whether the current directory is inside one of those worktrees. The checkout root and `<checkout>/.bare` are not source working directories.
-4. Run project instructions and source-code inspection from the selected worktree, not from the checkout root.
+4. Select the worktree to work in:
+   - Inside a worktree already: use that one.
+   - At the checkout root with exactly one worktree registered: use it and say which one.
+   - At the checkout root with several registered: **ask the user which worktree** before reading source or making changes. Do not guess from the branch names.
+5. Load that worktree's agent configuration before any other work — see **Load Agent Configuration**.
+6. Run project instructions and source-code inspection from the selected worktree, not from the checkout root.
 
 Treat sibling worktrees as concurrent checkouts. A branch can be checked out in only one worktree; never use `git switch` or `git checkout` to take a branch already assigned to another worktree.
+
+## Load Agent Configuration
+
+Agent configuration lives inside each worktree, but agents resolve it from the directory they were **launched** in. An agent started at the checkout root therefore begins with none of it loaded. `wtree clone` links the configuration into the checkout root to prevent this, but a checkout created before that behavior, or one whose links point at a different worktree, still starts blind.
+
+### Read what is readable
+
+Read these from the selected worktree, because nothing loaded them for you. Skip the ones that do not exist:
+
+```text
+CLAUDE.md   AGENTS.md   CONTEXT.md   README.md
+docs/agents/*
+.claude/settings.json
+.claude/skills/*/SKILL.md
+.claude/agents/*
+```
+
+Follow them as project instructions for the rest of the task.
+
+### Detect what cannot be loaded
+
+These take effect only at agent startup and cannot be loaded mid-session: MCP servers from `.mcp.json`, hooks, permission rules, `enabledPlugins`, and `enabledMcpjsonServers` from `.claude/settings.json`.
+
+To check the MCP servers, read the worktree's `.mcp.json` and compare each server name against the tools actually available to you. A server named `kaneo` is loaded only if `mcp__kaneo__*` tools exist. If the file names a server and no such tool exists, it is **not loaded** — no tool call will make it appear.
+
+### Repair it
+
+Run from the checkout root, then restart the agent there:
+
+```bash
+wtree link <worktree-dir>
+```
+
+This links `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.claude/` and `.opencode/` from that worktree into the checkout root, so the next agent started at the root loads them. It links only files that exist and never replaces an existing regular file. Restarting the agent directly inside the worktree works too.
+
+### Report, then continue
+
+State plainly which configuration is missing and give the exact command above. Then keep working on everything that does not depend on it. Stop only when the task genuinely needs the unloaded configuration — never guess at data that lives behind an MCP server you cannot reach, and never present a recollection of it as a current reading.
 
 ## Select Or Create Feature Worktrees
 

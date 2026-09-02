@@ -2,13 +2,19 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 BARE_DIR=".bare"
 REMOTE="origin"
 BRANCH=""
 WORKTREE_DIR=""
 REPO_URL=""
 CHECKOUT_DIR=""
+NO_LINK=0
+
+# Startup-time agent configuration. Agents resolve these from their launch
+# directory, so a checkout root without them cannot load a worktree's MCP
+# servers, settings, hooks or instructions.
+AGENT_CONFIG_ENTRIES=(.mcp.json CLAUDE.md AGENTS.md .claude .opencode)
 
 usage() {
     cat <<'EOF'
@@ -20,6 +26,8 @@ Commands:
   clone [options] <repo-url> [<directory>]
                                Create a repository directory containing a bare
                                repository and its first worktree.
+  link [<worktree-dir>]        Link a worktree's agent configuration into the
+                               checkout root so agents started there load it.
 
 Options:
   -b, --branch <name>     Create the first worktree from this remote branch.
@@ -28,11 +36,18 @@ Options:
                            First worktree directory (default: branch basename).
       --bare-dir <path>   Bare repository directory (default: .bare).
   -r, --remote <name>     Remote name to configure (default: origin).
+      --no-link           Skip linking agent configuration after cloning.
   -h, --help              Show this help message.
   -V, --version           Show the version.
 
 Without --branch, wtree uses the remote's default branch. If no default branch
 is available, it prompts for a remote branch.
+
+After cloning, wtree links the new worktree's agent configuration into the
+checkout root so an agent started there loads it. Only files that exist are
+linked, an existing regular file is never replaced, and a repository without
+agent configuration is left untouched. Run wtree link to repoint the links at
+another worktree or to add them to a checkout created before this behavior.
 
 Examples:
   wtree clone git@github.com:owner/repository.git
@@ -40,12 +55,19 @@ Examples:
   wtree clone --branch main https://github.com/owner/repository.git
   wtree clone --branch dev/MAIN --worktree-dir MAIN <repo-url>
   wtree clone --bare-dir .git-data --remote upstream --branch dev <repo-url>
+  wtree clone --no-link <repo-url>
+  wtree link
+  wtree link dev
 EOF
 }
 
 error() {
     printf 'Error: %s\n' "$*" >&2
     exit 1
+}
+
+warn() {
+    printf 'Warning: %s\n' "$*" >&2
 }
 
 require_option_value() {
@@ -101,6 +123,10 @@ parse_args() {
             --remote=*)
                 REMOTE="${1#*=}"
                 [[ -n "$REMOTE" ]] || error "Option --remote requires a value."
+                shift
+                ;;
+            --no-link)
+                NO_LINK=1
                 shift
                 ;;
             --)
@@ -210,6 +236,138 @@ create_worktree() {
     git worktree add --track -b "$BRANCH" "$WORKTREE_DIR" "$REMOTE/$BRANCH"
 }
 
+resolve_checkout_root() {
+    local start="${1:-.}"
+    local dir common
+
+    dir="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 1
+    common="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null)" || return 1
+
+    case "$common" in
+        /*) ;;
+        *) common="$dir/$common" ;;
+    esac
+
+    common="$(CDPATH= cd -- "$common" 2>/dev/null && pwd -P)" || return 1
+    [[ "$(git -C "$common" rev-parse --is-bare-repository 2>/dev/null)" == 'true' ]] || return 1
+
+    dirname -- "$common"
+}
+
+resolve_link_target() {
+    local link="$1"
+    local target dir
+
+    target="$(readlink -- "$link")" || return 1
+    case "$target" in
+        /*) ;;
+        *) target="$(dirname -- "$link")/$target" ;;
+    esac
+
+    dir="$(CDPATH= cd -- "$(dirname -- "$target")" 2>/dev/null && pwd -P)" || return 1
+    printf '%s/%s\n' "$dir" "$(basename -- "$target")"
+}
+
+worktree_dirs() {
+    local checkout="$1"
+    local line path
+
+    while IFS= read -r line; do
+        [[ "$line" == 'worktree '* ]] || continue
+        path="${line#worktree }"
+        path="$(CDPATH= cd -- "$path" 2>/dev/null && pwd -P)" || continue
+        [[ "$path" == "$checkout"/* ]] || continue
+        [[ "$(git -C "$path" rev-parse --is-bare-repository 2>/dev/null)" != 'true' ]] || continue
+        printf '%s\n' "${path#"$checkout"/}"
+    done < <(git -C "$checkout" worktree list --porcelain 2>/dev/null)
+}
+
+link_agent_config() {
+    local checkout="$1"
+    local worktree="$2"
+    local name source target resolved
+    local linked=0
+
+    for name in "${AGENT_CONFIG_ENTRIES[@]}"; do
+        source="$checkout/$worktree/$name"
+        target="$checkout/$name"
+
+        [[ -e "$source" ]] || continue
+
+        if [[ -L "$target" ]]; then
+            resolved="$(resolve_link_target "$target")" || resolved=""
+            if [[ -z "$resolved" || "$resolved" != "$checkout"/* ]]; then
+                warn "Left '$name' in place: it is not a link into this checkout."
+                continue
+            fi
+        elif [[ -e "$target" ]]; then
+            warn "Left the existing '$name' in place at the checkout root."
+            continue
+        fi
+
+        if ln -sfn "$worktree/$name" "$target"; then
+            printf 'Linked %s -> %s/%s\n' "$name" "$worktree" "$name"
+            linked=$((linked + 1))
+        else
+            warn "Could not link '$name' into the checkout root."
+        fi
+    done
+
+    if (( linked == 0 )); then
+        printf 'No agent configuration to link from %s/.\n' "$worktree"
+    fi
+}
+
+cmd_link() {
+    local worktree=""
+    local checkout candidate found
+    local dirs=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --)
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1. Run 'wtree --help' for usage."
+                ;;
+            *)
+                [[ -z "$worktree" ]] || error "Expected at most one worktree directory."
+                worktree="$1"
+                shift
+                ;;
+        esac
+    done
+
+    command -v git >/dev/null 2>&1 || error "Git is required but was not found in PATH."
+
+    checkout="$(resolve_checkout_root .)" || error "Not inside a wtree checkout: no ancestor bare repository was found."
+
+    while IFS= read -r candidate; do
+        dirs+=("$candidate")
+    done < <(worktree_dirs "$checkout")
+
+    [[ ${#dirs[@]} -gt 0 ]] || error "No worktrees are registered in '$checkout'."
+
+    if [[ -z "$worktree" ]]; then
+        [[ ${#dirs[@]} -eq 1 ]] || error "Several worktrees are registered (${dirs[*]}). Name the one to link."
+        worktree="${dirs[0]}"
+    else
+        worktree="${worktree%/}"
+        found=0
+        for candidate in "${dirs[@]}"; do
+            [[ "$candidate" != "$worktree" ]] || found=1
+        done
+        (( found == 1 )) || error "'$worktree' is not a registered worktree (${dirs[*]})."
+    fi
+
+    link_agent_config "$checkout" "$worktree"
+}
+
 main() {
     case "${1:-}" in
         -h|--help)
@@ -222,6 +380,11 @@ main() {
             ;;
         clone)
             shift
+            ;;
+        link)
+            shift
+            cmd_link "$@"
+            exit 0
             ;;
         '')
             error "Missing command. Run 'wtree --help' for usage."
@@ -250,6 +413,10 @@ main() {
         fi
     fi
     create_worktree
+
+    if (( NO_LINK == 0 )); then
+        link_agent_config "$PWD" "$WORKTREE_DIR"
+    fi
 
     printf 'Setup complete. First worktree: %s/ (branch %s)\n' "$WORKTREE_DIR" "$BRANCH"
 }
