@@ -33,7 +33,7 @@ success() {
 }
 
 step 'Preparing local command directory'
-mkdir -p "$LOCAL_BIN" "$HOME/.claude/skills" "$HOME/.claude/commands" "$HOME/.config/opencode/command"
+mkdir -p "$LOCAL_BIN" "$HOME/.claude/skills" "$HOME/.claude/commands" "$HOME/.config/opencode/skills" "$HOME/.config/opencode/command"
 
 step 'Installing wtree command'
 chmod 755 "$ROOT_DIR/scripts/wtree"
@@ -43,6 +43,7 @@ ln -sfn "$ROOT_DIR/scripts/wtree" "$LOCAL_BIN/wtree"
 step 'Installing AI command integrations'
 ln -sfn "$ROOT_DIR/skills/wtree" "$HOME/.claude/skills/wtree"
 ln -sfn "$ROOT_DIR/commands/wtree.md" "$HOME/.claude/commands/wtree.md"
+ln -sfn "$ROOT_DIR/skills/wtree" "$HOME/.config/opencode/skills/wtree"
 ln -sfn "$ROOT_DIR/commands/wtree.md" "$HOME/.config/opencode/command/wtree.md"
 
 if [[ ! -f "$PROFILE" ]] || ! grep -Fq 'HOME/.local/bin' "$PROFILE"; then

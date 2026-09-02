@@ -20,7 +20,7 @@ home="$TMP_DIR/home"
 install_dir="$home/.local/share/wtree.sh"
 
 mkdir "$seed" "$home"
-cp "$ROOT_DIR/bootstrap.sh" "$ROOT_DIR/install.sh" "$seed/"
+cp "$ROOT_DIR/bootstrap.sh" "$ROOT_DIR/install.sh" "$ROOT_DIR/Makefile" "$seed/"
 cp -R "$ROOT_DIR/scripts" "$ROOT_DIR/skills" "$ROOT_DIR/commands" "$seed/"
 
 git init --initial-branch=main "$seed" >/dev/null
@@ -45,6 +45,7 @@ run_bootstrap
 [[ "$(readlink "$home/.local/bin/wtree")" == "$install_dir/scripts/wtree" ]] || fail 'wtree symlink is incorrect'
 [[ "$(readlink "$home/.claude/skills/wtree")" == "$install_dir/skills/wtree" ]] || fail 'Claude skill symlink is incorrect'
 [[ "$(readlink "$home/.claude/commands/wtree.md")" == "$install_dir/commands/wtree.md" ]] || fail 'Claude command symlink is incorrect'
+[[ "$(readlink "$home/.config/opencode/skills/wtree")" == "$install_dir/skills/wtree" ]] || fail 'OpenCode skill symlink is incorrect'
 [[ "$(readlink "$home/.config/opencode/command/wtree.md")" == "$install_dir/commands/wtree.md" ]] || fail 'OpenCode command symlink is incorrect'
 [[ "$(grep -Fc 'export PATH="$PATH:$HOME/.local/bin"' "$home/.bashrc")" == 1 ]] || fail 'PATH entry was not added exactly once'
 
@@ -57,5 +58,13 @@ run_bootstrap
 
 [[ -f "$install_dir/updated" ]] || fail 'existing checkout was not fast-forwarded'
 [[ "$(grep -Fc 'export PATH="$PATH:$HOME/.local/bin"' "$home/.bashrc")" == 1 ]] || fail 'PATH entry was duplicated'
+
+env HOME="$home" make -C "$install_dir" uninstall >/dev/null
+
+[[ ! -e "$home/.local/bin/wtree" ]] || fail 'wtree symlink was not removed'
+[[ ! -e "$home/.claude/skills/wtree" ]] || fail 'Claude skill symlink was not removed'
+[[ ! -e "$home/.claude/commands/wtree.md" ]] || fail 'Claude command symlink was not removed'
+[[ ! -e "$home/.config/opencode/skills/wtree" ]] || fail 'OpenCode skill symlink was not removed'
+[[ ! -e "$home/.config/opencode/command/wtree.md" ]] || fail 'OpenCode command symlink was not removed'
 
 printf 'wtree installation tests passed\n'

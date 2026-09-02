@@ -29,6 +29,7 @@ Both installation methods also install linked global integrations for Claude Cod
 
 - `~/.claude/skills/wtree`
 - `~/.claude/commands/wtree.md`
+- `~/.config/opencode/skills/wtree`
 - `~/.config/opencode/command/wtree.md`
 
 Open a new shell after an added PATH entry. Restart Claude Code and OpenCode after installation so they reload the command and skill.
