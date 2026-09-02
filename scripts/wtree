@@ -8,6 +8,7 @@ REMOTE="origin"
 BRANCH=""
 WORKTREE_DIR=""
 REPO_URL=""
+CHECKOUT_DIR=""
 
 usage() {
     cat <<'EOF'
@@ -16,8 +17,9 @@ Usage: wtree <command> [options]
 Create and manage Git repositories backed by worktrees.
 
 Commands:
-  clone [options] <repo-url>  Create a bare repository in the current empty
-                              directory and add its first worktree.
+  clone [options] <repo-url> [<directory>]
+                               Create a repository directory containing a bare
+                               repository and its first worktree.
 
 Options:
   -b, --branch <name>     Create the first worktree from this remote branch.
@@ -34,6 +36,7 @@ is available, it prompts for a remote branch.
 
 Examples:
   wtree clone git@github.com:owner/repository.git
+  wtree clone git@github.com:owner/repository.git ~/Projects/repository
   wtree clone --branch main https://github.com/owner/repository.git
   wtree clone --branch dev/MAIN --worktree-dir MAIN <repo-url>
   wtree clone --bare-dir .git-data --remote upstream --branch dev <repo-url>
@@ -102,16 +105,22 @@ parse_args() {
                 ;;
             --)
                 shift
-                [[ $# -eq 1 ]] || error "Expected exactly one repository URL."
+                [[ $# -ge 1 && $# -le 2 ]] || error "Expected a repository URL and optional destination directory."
                 REPO_URL="$1"
+                CHECKOUT_DIR="${2:-}"
                 break
                 ;;
             -*)
                 error "Unknown option: $1. Run 'wtree --help' for usage."
                 ;;
             *)
-                [[ -z "$REPO_URL" ]] || error "Expected exactly one repository URL."
-                REPO_URL="$1"
+                if [[ -z "$REPO_URL" ]]; then
+                    REPO_URL="$1"
+                elif [[ -z "$CHECKOUT_DIR" ]]; then
+                    CHECKOUT_DIR="$1"
+                else
+                    error "Expected a repository URL and optional destination directory."
+                fi
                 shift
                 ;;
         esac
@@ -129,6 +138,28 @@ ensure_empty_directory() {
         error "Current directory is not empty. Run wtree in a fresh folder."
     done
     shopt -u dotglob nullglob
+}
+
+default_checkout_dir() {
+    local repository="$1"
+
+    repository="${repository%/}"
+    repository="${repository##*/}"
+    repository="${repository%.git}"
+    [[ -n "$repository" && "$repository" != "." && "$repository" != ".." ]] || error "Could not derive a directory name from repository URL '$1'. Specify a destination directory."
+    printf '%s\n' "$repository"
+}
+
+prepare_checkout_directory() {
+    local parent
+
+    CHECKOUT_DIR="${CHECKOUT_DIR:-$(default_checkout_dir "$REPO_URL")}"
+    [[ ! -e "$CHECKOUT_DIR" && ! -L "$CHECKOUT_DIR" ]] || error "Destination directory '$CHECKOUT_DIR' already exists."
+    parent="$(dirname "$CHECKOUT_DIR")"
+    [[ -d "$parent" ]] || error "Parent directory '$parent' does not exist."
+
+    mkdir -- "$CHECKOUT_DIR"
+    cd -- "$CHECKOUT_DIR"
 }
 
 branch_exists() {
@@ -202,6 +233,7 @@ main() {
 
     parse_args "$@"
     command -v git >/dev/null 2>&1 || error "Git is required but was not found in PATH."
+    prepare_checkout_directory
     ensure_empty_directory
 
     printf 'Initializing Git worktree setup...\n'

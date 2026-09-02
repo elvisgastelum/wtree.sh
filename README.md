@@ -35,11 +35,17 @@ Uninstall leaves the PATH entry in place because it may be used by other tools.
 
 ## Clone
 
-Run `wtree clone` in an empty directory. It creates `.bare`, fetches all remote branches as remote-tracking branches, and creates the first worktree from the remote's default branch.
+Run `wtree clone` from the parent directory where the checkout should be created. It creates a repository-named child directory containing `.bare`, fetches all remote branches as remote-tracking branches, and creates the first worktree from the remote's default branch.
 
 ```bash
-mkdir example && cd example
+cd ~/Projects
 wtree clone git@github.com:owner/repository.git
+```
+
+The example creates `~/Projects/repository/`. Pass a destination directory to choose a different checkout name or location:
+
+```bash
+wtree clone git@github.com:owner/repository.git ~/Projects/custom-repository
 ```
 
 Specify a branch when you do not want the remote default branch:
@@ -89,4 +95,4 @@ Claude Code and OpenCode expose the installed command as:
 /wtree clone <repo-url>
 ```
 
-For that minimal form, the agent creates a new directory named after the repository in the current directory, then runs `wtree clone` inside it. The agent skill recognizes an existing wtree checkout by locating and verifying its ancestor `.bare` directory before using worktree commands.
+For that minimal form, the CLI creates a new directory named after the repository in the current directory. The agent skill recognizes an existing wtree checkout by locating and verifying its ancestor `.bare` directory before using worktree commands.

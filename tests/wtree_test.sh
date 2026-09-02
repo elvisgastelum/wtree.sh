@@ -31,14 +31,22 @@ clone_into() {
     local checkout="$1"
     shift
 
-    mkdir "$checkout"
     (
-        cd "$checkout"
-        "$WTREE" clone "$@"
+        cd "$(dirname "$checkout")"
+        "$WTREE" clone "$@" "$(basename "$checkout")"
     ) >/dev/null
 }
 
 main_remote="$(create_remote main main)"
+default_parent="$TMP_DIR/default-parent"
+mkdir "$default_parent"
+(
+    cd "$default_parent"
+    "$WTREE" clone "$main_remote"
+) >/dev/null
+[[ -d "$default_parent/main/.bare" ]] || fail 'default destination did not contain bare repository'
+[[ -d "$default_parent/main/main" ]] || fail 'default destination did not contain main worktree'
+
 main_checkout="$TMP_DIR/main-checkout"
 clone_into "$main_checkout" "$main_remote"
 [[ -d "$main_checkout/.bare" ]] || fail 'missing bare repository'
@@ -77,5 +85,14 @@ fi
 no_default_checkout="$TMP_DIR/no-default-checkout"
 clone_into "$no_default_checkout" --branch topic "$no_default_remote"
 [[ -d "$no_default_checkout/topic" ]] || fail 'explicit branch was not cloned without remote default branch'
+
+existing_checkout="$TMP_DIR/existing-checkout"
+mkdir "$existing_checkout"
+if (
+    cd "$TMP_DIR"
+    "$WTREE" clone "$main_remote" "$existing_checkout"
+) >/dev/null 2>&1; then
+    fail 'existing destination directory was overwritten'
+fi
 
 printf 'wtree integration tests passed\n'

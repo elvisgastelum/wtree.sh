@@ -26,13 +26,13 @@ The result must be `true`. Do not infer the layout only from a worktree's `.git`
 
 ## Clone
 
-Use the explicit clone command only from an empty target directory:
+Run the explicit clone command from the parent directory where the checkout should be created:
 
 ```bash
-wtree clone [--branch <name>] [--worktree-dir <path>] [--bare-dir <path>] [--remote <name>] <repo-url>
+wtree clone [--branch <name>] [--worktree-dir <path>] [--bare-dir <path>] [--remote <name>] <repo-url> [<directory>]
 ```
 
-Without `--branch`, it uses the remote's default branch. If no default branch is available, it offers the fetched remote branches interactively; supply `--branch` when non-interactive execution is required. The initial worktree directory defaults to the branch basename, so `dev/MAIN` creates `MAIN/`; override it with `--worktree-dir`. Never run `wtree clone` inside an existing repository or worktree.
+Without `<directory>`, it creates a child directory named after the repository URL (without a trailing `.git`); provide one to choose the checkout location. Without `--branch`, it uses the remote's default branch. If no default branch is available, it offers the fetched remote branches interactively; supply `--branch` when non-interactive execution is required. The initial worktree directory defaults to the branch basename, so `dev/MAIN` creates `MAIN/`; override it with `--worktree-dir`. Never run `wtree clone` inside an existing repository or worktree.
 
 ## Manage Worktrees
 
