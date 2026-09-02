@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 BARE_DIR=".bare"
 REMOTE="origin"
 BRANCH=""
@@ -10,10 +10,13 @@ REPO_URL=""
 
 usage() {
     cat <<'EOF'
-Usage: wtree [options] <repo-url>
+Usage: wtree <command> [options]
 
-Create a bare Git repository in the current empty directory and add its first
-worktree.
+Create and manage Git repositories backed by worktrees.
+
+Commands:
+  clone [options] <repo-url>  Create a bare repository in the current empty
+                              directory and add its first worktree.
 
 Options:
   -b, --branch <name>     Create the first worktree from this remote branch.
@@ -27,9 +30,9 @@ Without --branch, wtree prompts for an available main, master, or dev branch.
 The first worktree is created in a directory named after the selected branch.
 
 Examples:
-  wtree git@github.com:owner/repository.git
-  wtree --branch main https://github.com/owner/repository.git
-  wtree --bare-dir .git-data --remote upstream --branch dev <repo-url>
+  wtree clone git@github.com:owner/repository.git
+  wtree clone --branch main https://github.com/owner/repository.git
+  wtree clone --bare-dir .git-data --remote upstream --branch dev <repo-url>
 EOF
 }
 
@@ -164,6 +167,26 @@ create_worktree() {
 }
 
 main() {
+    case "${1:-}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -V|--version)
+            printf 'wtree %s\n' "$VERSION"
+            exit 0
+            ;;
+        clone)
+            shift
+            ;;
+        '')
+            error "Missing command. Run 'wtree --help' for usage."
+            ;;
+        *)
+            error "Unknown command: $1. Run 'wtree --help' for usage."
+            ;;
+    esac
+
     parse_args "$@"
     command -v git >/dev/null 2>&1 || error "Git is required but was not found in PATH."
     ensure_empty_directory
