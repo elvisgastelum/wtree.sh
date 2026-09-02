@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+VERSION="0.1.0"
+BARE_DIR=".bare"
+REMOTE="origin"
+BRANCH=""
+REPO_URL=""
+
+usage() {
+    cat <<'EOF'
+Usage: wtree [options] <repo-url>
+
+Create a bare Git repository in the current empty directory and add its first
+worktree.
+
+Options:
+  -b, --branch <name>     Create the first worktree from this remote branch.
+                           Skips the interactive branch selection.
+      --bare-dir <path>   Bare repository directory (default: .bare).
+  -r, --remote <name>     Remote name to configure (default: origin).
+  -h, --help              Show this help message.
+  -V, --version           Show the version.
+
+Without --branch, wtree prompts for an available main, master, or dev branch.
+The first worktree is created in a directory named after the selected branch.
+
+Examples:
+  wtree git@github.com:owner/repository.git
+  wtree --branch main https://github.com/owner/repository.git
+  wtree --bare-dir .git-data --remote upstream --branch dev <repo-url>
+EOF
+}
+
+error() {
+    printf 'Error: %s\n' "$*" >&2
+    exit 1
+}
+
+require_option_value() {
+    [[ $# -gt 1 && -n "$2" && "$2" != -* ]] || error "Option $1 requires a value."
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            -V|--version)
+                printf 'wtree %s\n' "$VERSION"
+                exit 0
+                ;;
+            -b|--branch)
+                require_option_value "$1" "${2:-}"
+                BRANCH="$2"
+                shift 2
+                ;;
+            --branch=*)
+                BRANCH="${1#*=}"
+                [[ -n "$BRANCH" ]] || error "Option --branch requires a value."
+                shift
+                ;;
+            --bare-dir)
+                require_option_value "$1" "${2:-}"
+                BARE_DIR="$2"
+                shift 2
+                ;;
+            --bare-dir=*)
+                BARE_DIR="${1#*=}"
+                [[ -n "$BARE_DIR" ]] || error "Option --bare-dir requires a value."
+                shift
+                ;;
+            -r|--remote)
+                require_option_value "$1" "${2:-}"
+                REMOTE="$2"
+                shift 2
+                ;;
+            --remote=*)
+                REMOTE="${1#*=}"
+                [[ -n "$REMOTE" ]] || error "Option --remote requires a value."
+                shift
+                ;;
+            --)
+                shift
+                [[ $# -eq 1 ]] || error "Expected exactly one repository URL."
+                REPO_URL="$1"
+                break
+                ;;
+            -*)
+                error "Unknown option: $1. Run 'wtree --help' for usage."
+                ;;
+            *)
+                [[ -z "$REPO_URL" ]] || error "Expected exactly one repository URL."
+                REPO_URL="$1"
+                shift
+                ;;
+        esac
+    done
+
+    [[ -n "$REPO_URL" ]] || error "Missing repository URL. Run 'wtree --help' for usage."
+}
+
+ensure_empty_directory() {
+    local entry
+    shopt -s dotglob nullglob
+    for entry in *; do
+        # Allow the script itself when it is stored in the setup directory.
+        [[ "$entry" -ef "${BASH_SOURCE[0]}" ]] && continue
+        error "Current directory is not empty. Run wtree in a fresh folder."
+    done
+    shopt -u dotglob nullglob
+}
+
+branch_exists() {
+    git show-ref --verify --quiet "refs/remotes/$REMOTE/$1"
+}
+
+select_branch() {
+    local candidates=(main master dev)
+    local available=()
+    local candidate choice index
+
+    for candidate in "${candidates[@]}"; do
+        if branch_exists "$candidate"; then
+            available+=("$candidate")
+        fi
+    done
+
+    [[ ${#available[@]} -gt 0 ]] || error "No main, master, or dev branch exists on remote '$REMOTE'. Use --branch <name>."
+    [[ -t 0 ]] || error "No interactive terminal available. Use --branch <name>."
+
+    printf 'Choose the first worktree branch:\n'
+    for index in "${!available[@]}"; do
+        printf '  %d) %s\n' "$((index + 1))" "${available[$index]}"
+    done
+
+    while :; do
+        if ! read -r -p "Choice [1-${#available[@]}]: " choice; then
+            error "No branch selection received. Use --branch <name>."
+        fi
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#available[@]} )); then
+            BRANCH="${available[$((choice - 1))]}"
+            return
+        fi
+        printf 'Enter a number between 1 and %d.\n' "${#available[@]}" >&2
+    done
+}
+
+create_worktree() {
+    local worktree_path="$BRANCH"
+
+    branch_exists "$BRANCH" || error "Branch '$BRANCH' does not exist on remote '$REMOTE'."
+    mkdir -p -- "$(dirname "$worktree_path")"
+
+    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        git worktree add "$worktree_path" "$BRANCH"
+        git branch --set-upstream-to="$REMOTE/$BRANCH" "$BRANCH"
+    else
+        git worktree add --track -b "$BRANCH" "$worktree_path" "$REMOTE/$BRANCH"
+    fi
+}
+
+main() {
+    parse_args "$@"
+    command -v git >/dev/null 2>&1 || error "Git is required but was not found in PATH."
+    ensure_empty_directory
+
+    printf 'Initializing Git worktree setup...\n'
+    git clone --bare --origin "$REMOTE" "$REPO_URL" "$BARE_DIR"
+    printf 'gitdir: %s\n' "$BARE_DIR" > .git
+    git config "remote.$REMOTE.fetch" "+refs/heads/*:refs/remotes/$REMOTE/*"
+    git fetch "$REMOTE"
+
+    if [[ -z "$BRANCH" ]]; then
+        select_branch
+    fi
+    create_worktree
+
+    printf 'Setup complete. First worktree: %s/\n' "$BRANCH"
+}
+
+main "$@"
