@@ -105,3 +105,11 @@ Claude Code and OpenCode expose the installed command as:
 ```
 
 For that minimal form, the CLI creates a new directory named after the repository in the current directory. The agent skill recognizes an existing wtree checkout by locating and verifying its ancestor `.bare` directory before using worktree commands.
+
+## Agent Worktree Context
+
+The installed Claude Code and OpenCode skill activates only inside a verified `wtree clone` checkout. It recognizes the checkout root even when the agent starts there instead of inside `main/` or another worktree, then lists the shared bare repository's registered worktrees before editing code.
+
+For a new feature, the agent first checks project instructions and existing branches for naming conventions. It then suggests a sanitized branch name and sibling worktree directory, such as `feature-export-csv/`, and waits for confirmation before creating it. Project conventions take precedence over the suggested fallback name.
+
+The agent creates confirmed worktrees through `.bare`, bases them on the configured remote's default branch, and performs edits, commits, pulls, and pushes only from the selected sibling worktree. The checkout root and `.bare/` are never treated as source working directories.
