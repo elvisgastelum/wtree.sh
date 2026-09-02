@@ -20,3 +20,4 @@ uninstall:
 
 test:
 	bash tests/wtree_test.sh
+	bash tests/install_test.sh

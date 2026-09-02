@@ -11,13 +11,21 @@ checkout/
 
 ## Install
 
-Install from this repository:
+Install from a new machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/elvisgastelum/wtree.sh/main/bootstrap.sh | sh
+```
+
+This clones wtree into `~/.local/share/wtree.sh`, makes `scripts/wtree` executable, links it as `~/.local/bin/wtree`, and adds `~/.local/bin` to the active shell profile only when it is not already configured. Re-running the command safely fast-forwards the checkout.
+
+For an existing local clone:
 
 ```bash
 make install
 ```
 
-It makes `scripts/wtree` executable, links it as `~/.local/bin/wtree`, and adds `~/.local/bin` to the active shell profile only when it is not already configured. It also installs linked global integrations for Claude Code and OpenCode:
+Both installation methods also install linked global integrations for Claude Code and OpenCode:
 
 - `~/.claude/skills/wtree`
 - `~/.claude/commands/wtree.md`
