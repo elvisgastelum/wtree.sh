@@ -86,16 +86,53 @@ If the remote has no default branch, `wtree` offers its remote branches interact
 
 ## Worktrees
 
-Use the shared bare repository to add and remove sibling worktrees:
+Use the shared bare repository to add sibling worktrees, and run normal Git commands from the
+individual worktree directories:
 
 ```bash
 git -C .bare worktree list
 git -C .bare worktree add -b feature-x ../feature-x main
+```
+
+## Remove
+
+A worktree exists to host one branch. When that branch has landed, `wtree remove` retires the whole
+thing in one step: it removes the directory, deletes the local branch, repoints the checkout root's
+agent configuration, and prunes.
+
+```bash
+cd checkout
+wtree remove --dry-run feature-x   # report what removal would do, change nothing
+wtree remove feature-x
+```
+
+Options:
+
+```text
+    --base <ref>        Branch the work must have landed on
+                        (default: the remote's default branch).
+    --keep-branch       Remove the worktree but keep the local branch.
+    --force             Remove despite uncommitted, untracked or unlanded work.
+                        This discards it.
+-n, --dry-run           Report what removal would do and change nothing.
+```
+
+"Landed" is decided by content, not by ancestry. Squash and rebase merges leave the branch tip a
+non-ancestor of the base, so `git branch --merged` calls almost every finished branch unmerged;
+`wtree remove` also compares the branch's squashed patch against the base, and recognises it.
+
+It refuses rather than prompts — the worktree you are standing in, the one holding the remote's
+default branch, the last one in the checkout, and any worktree with uncommitted or untracked files
+or with commits that have not landed. `--force` overrides the last two and discards that work.
+Stashes are never at risk: they live in the shared repository, not in the worktree. The remote
+branch is never touched; deleting it stays a deliberate `git push --delete`.
+
+For anything `wtree remove` deliberately refuses, the raw commands are still there:
+
+```bash
 git -C .bare worktree remove ../feature-x
 git -C .bare worktree prune
 ```
-
-Run normal Git commands from the individual worktree directories.
 
 ## Agent Command
 
@@ -138,9 +175,19 @@ wtree link dev        # a specific worktree
 `wtree link` runs from the checkout root or from inside any of its worktrees. Restart the agent
 afterwards: MCP servers, hooks and permissions are read once at startup.
 
+Removing a worktree is the other half of this. The root's links point *into* a worktree, so deleting
+that worktree would leave the root full of dangling links — and a dangling link cannot be repaired by
+`wtree link`, which refuses to touch a link it cannot resolve. `wtree remove` therefore takes the
+links down as part of the removal and puts them back on the remaining worktree, or, when several are
+left and the choice is not obvious, prints the `wtree link` command for each candidate.
+
 ## Agent Worktree Context
 
 The installed Claude Code and OpenCode skill activates only inside a verified `wtree clone` checkout. It recognizes the checkout root even when the agent starts there instead of inside `main/` or another worktree, then lists the shared bare repository's registered worktrees before editing code.
+
+When the user says a branch's work is done, the agent proposes `wtree remove --dry-run <worktree>`,
+shows what it reports, and waits for confirmation before the real run. It never scans for landed
+branches on its own and never passes `--force` unless told to.
 
 For a new feature, the agent first checks project instructions and existing branches for naming conventions. It then suggests a sanitized branch name and sibling worktree directory, such as `feature-export-csv/`, and waits for confirmation before creating it. Project conventions take precedence over the suggested fallback name.
 

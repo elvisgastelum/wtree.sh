@@ -1,6 +1,6 @@
 ---
 name: wtree
-description: Use ONLY for `/wtree` requests or when the current directory is inside a verified wtree clone checkout with an ancestor `.bare` repository. Guides worktree selection, loading a worktree's agent configuration, and safe multi-worktree feature work, branches, pulls, and pushes.
+description: Use ONLY for `/wtree` requests or when the current directory is inside a verified wtree clone checkout with an ancestor `.bare` repository. Guides worktree selection, loading a worktree's agent configuration, safe multi-worktree feature work, branches, pulls, pushes, and retiring a worktree whose branch has landed.
 ---
 
 # wtree
@@ -125,7 +125,67 @@ git -C <checkout>/<worktree-dir> push -u <remote> <branch>
 - Pull only a clean worktree with an established upstream. A newly created feature branch has no upstream until its first `push -u`.
 - Fetching and inspecting worktrees may use the shared bare repository; source edits, commits, merges, rebases, pulls, and pushes belong to the selected worktree.
 - Push the selected branch explicitly. Do not push another worktree's branch or force-push unless the user explicitly requests it.
-- Before removing a worktree, inspect its status and verify that no uncommitted or unpushed work would be lost.
+- When a branch's work has landed, retire its worktree rather than reusing it — see **Retire A Completed Worktree**.
+
+## Retire A Completed Worktree
+
+A worktree exists to host one branch. Once that branch has landed on the branch it targeted, the
+worktree has finished its purpose and is retired: the directory goes, the local branch goes, and the
+checkout root's agent configuration is repointed. Do not switch a new branch into a finished
+worktree — the layout stays readable only while each directory names the branch it holds.
+
+Raise this only when the user asks to clean up or says the work on a branch is done. Do not scan for
+landed branches during **Orient Before Working**, and never retire a worktree the user has not named
+and confirmed.
+
+Propose first. Run this from the checkout root or any other worktree, never from inside the one being
+removed:
+
+```bash
+wtree remove --dry-run <worktree-dir>
+```
+
+It reports whether the branch has landed, whether the branch would be deleted, and which
+agent-configuration links would move, and it changes nothing. Show the user that report, wait for
+confirmation, then run the same command without `--dry-run`:
+
+```bash
+wtree remove <worktree-dir>
+wtree remove --base <remote>/<branch> <worktree-dir>   # the work targeted another branch
+wtree remove --keep-branch <worktree-dir>              # remove the directory, keep the branch
+```
+
+### Landed is decided by content
+
+Squash and rebase merges rewrite the commits, so a landed branch's tip is usually **not** an ancestor
+of its base. `git branch --merged` calls such a branch unmerged, which makes it the wrong test on its
+own. `wtree remove` checks ancestry first and then compares the branch's squashed patch against the
+base, so a squash-merged branch is recognized and its branch deleted. Report what the command
+decided instead of forming a separate judgment.
+
+The base defaults to the remote's default branch. When the repository integrates somewhere else — a
+`dev` that later merges to `main` — pass `--base <remote>/dev`.
+
+### Treat a refusal as information
+
+`wtree remove` refuses rather than prompts. It refuses the worktree you are standing in, the one
+holding the remote's default branch, the last one in the checkout, and any worktree with uncommitted
+or untracked files or with commits that have not landed. Every refusal names what it found.
+
+Report that to the user. `--force` is the flag that discards the work the refusal was protecting, so
+pass it only when the user says to. Never delete the remote branch: `wtree remove` does not, and
+`git push <remote> --delete <branch>` is the user's decision rather than a cleanup step.
+
+Stashes are safe either way — they live in the shared repository, not in the worktree, and survive
+its removal.
+
+### Repoint the agent configuration
+
+The checkout root's `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.claude/` and `.opencode/` are links into
+one worktree. When that is the worktree being removed, `wtree remove` repoints them at the remaining
+worktree; when several remain and the choice is not obvious, it removes them and names the
+candidates. Run the `wtree link <worktree-dir>` command it prints, then restart the agent, because
+MCP servers, hooks and permissions load only at startup — see **Load Agent Configuration**.
 
 ## Clone
 
@@ -144,8 +204,7 @@ Run Git worktree operations through the shared bare repository. Replace `<checko
 ```bash
 git -C <checkout>/.bare worktree list
 git -C <checkout>/.bare worktree add -b <branch> <checkout>/<branch> <start-point>
-git -C <checkout>/.bare worktree remove <checkout>/<branch>
 git -C <checkout>/.bare worktree prune
 ```
 
-Before removing a worktree, ensure it has no work that must be kept. Use normal Git commands from the selected worktree for status, commits, fetches, merges, and pushes.
+Retire a finished worktree with `wtree remove` — see **Retire A Completed Worktree**. Reach for `git -C <checkout>/.bare worktree remove` only for what `wtree remove` deliberately refuses, such as emptying a checkout of its last worktree, and say why the refusal is being bypassed. Use normal Git commands from the selected worktree for status, commits, fetches, merges, and pushes.

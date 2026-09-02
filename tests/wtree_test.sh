@@ -189,10 +189,10 @@ clone_into "$single_checkout" --no-link "$agent_remote"
 ) >/dev/null
 [[ "$(readlink "$single_checkout/.mcp.json")" == 'main/.mcp.json' ]] || fail 'wtree link did not use the only registered worktree'
 
-outside_dir="$TMP_DIR/outside"
-mkdir "$outside_dir"
+outside_root="$TMP_DIR/outside"
+mkdir "$outside_root"
 if (
-    cd "$outside_dir"
+    cd "$outside_root"
     "$WTREE" link
 ) >/dev/null 2>&1; then
     fail 'wtree link ran outside a wtree checkout'
@@ -206,5 +206,162 @@ if (
 ) >/dev/null 2>&1; then
     fail 'existing destination directory was overwritten'
 fi
+
+# --- wtree remove ---------------------------------------------------------
+
+TEST_ID=(-c user.name=wtree-test -c user.email=wtree-test@example.invalid)
+
+commit_in() {
+    local worktree="$1"
+    local file="$2"
+    local content="$3"
+    local message="$4"
+
+    printf '%s\n' "$content" > "$worktree/$file"
+    git -C "$worktree" add -A >/dev/null
+    git -C "$worktree" "${TEST_ID[@]}" commit -m "$message" >/dev/null
+}
+
+add_worktree() {
+    local checkout="$1"
+    local name="$2"
+
+    git -C "$checkout" worktree add -b "$name" "$checkout/$name" origin/main >/dev/null 2>&1
+}
+
+run_wtree() {
+    local dir="$1"
+    shift
+
+    (
+        cd "$dir"
+        "$WTREE" "$@"
+    )
+}
+
+branch_exists_in() {
+    git -C "$1" show-ref --verify --quiet "refs/heads/$2"
+}
+
+remove_remote="$(create_agent_remote agent-remove)"
+remove_checkout="$TMP_DIR/remove-checkout"
+clone_into "$remove_checkout" "$remove_remote"
+
+# A branch merged with a merge commit is removed together with its branch.
+add_worktree "$remove_checkout" merged
+commit_in "$remove_checkout/merged" feature.txt merged 'add feature'
+git -C "$remove_checkout/main" "${TEST_ID[@]}" merge --no-ff -m 'merge merged' merged >/dev/null
+git -C "$remove_checkout/main" push origin main >/dev/null 2>&1
+
+dry_run_output="$(run_wtree "$remove_checkout" remove --dry-run merged)"
+[[ "$dry_run_output" == *'has landed on origin/main'* ]] || fail 'wtree remove --dry-run did not report the merged branch as landed'
+[[ -d "$remove_checkout/merged" ]] || fail 'wtree remove --dry-run removed the worktree'
+branch_exists_in "$remove_checkout" merged || fail 'wtree remove --dry-run deleted the branch'
+
+run_wtree "$remove_checkout" remove merged >/dev/null
+[[ ! -e "$remove_checkout/merged" ]] || fail 'wtree remove left the worktree directory behind'
+! branch_exists_in "$remove_checkout" merged || fail 'wtree remove left the merged branch behind'
+git -C "$remove_checkout" worktree list --porcelain | grep -qxF "worktree $remove_checkout/merged" && fail 'wtree remove left the worktree registered'
+
+# A squash-merged branch has a tip that is not an ancestor of the base, and is
+# still removed: the decision is made by patch-id, not by ancestry.
+add_worktree "$remove_checkout" squashed
+commit_in "$remove_checkout/squashed" one.txt one 'add one'
+commit_in "$remove_checkout/squashed" two.txt two 'add two'
+git -C "$remove_checkout/main" merge --squash squashed >/dev/null
+git -C "$remove_checkout/main" "${TEST_ID[@]}" commit -m 'squashed squashed' >/dev/null
+git -C "$remove_checkout/main" push origin main >/dev/null 2>&1
+
+git -C "$remove_checkout" merge-base --is-ancestor squashed origin/main && fail 'the squash fixture did not produce a non-ancestor tip'
+[[ -z "$(git -C "$remove_checkout" branch --merged origin/main --list squashed)" ]] || fail 'the squash fixture did not produce a branch git calls unmerged'
+
+remove_output="$(run_wtree "$remove_checkout" remove squashed)"
+[[ "$remove_output" == *'squashed or rebased commit'* ]] || fail 'wtree remove did not report the squash-merged branch deletion'
+[[ ! -e "$remove_checkout/squashed" ]] || fail 'wtree remove left the squash-merged worktree behind'
+! branch_exists_in "$remove_checkout" squashed || fail 'wtree remove left the squash-merged branch behind'
+
+# Unlanded commits are refused, and --force discards them.
+add_worktree "$remove_checkout" unlanded
+commit_in "$remove_checkout/unlanded" pending.txt pending 'add pending'
+if run_wtree "$remove_checkout" remove unlanded >/dev/null 2>&1; then
+    fail 'wtree remove removed a worktree holding unlanded commits'
+fi
+if run_wtree "$remove_checkout" remove --dry-run unlanded >/dev/null 2>&1; then
+    fail 'wtree remove --dry-run reported success for unlanded commits'
+fi
+[[ -d "$remove_checkout/unlanded" ]] || fail 'a refused wtree remove still removed the worktree'
+run_wtree "$remove_checkout" remove --force unlanded >/dev/null
+[[ ! -e "$remove_checkout/unlanded" ]] || fail 'wtree remove --force left the worktree behind'
+! branch_exists_in "$remove_checkout" unlanded || fail 'wtree remove --force left the unlanded branch behind'
+
+# Untracked files alone are enough to refuse.
+add_worktree "$remove_checkout" dirty
+printf 'scratch\n' > "$remove_checkout/dirty/untracked.txt"
+if run_wtree "$remove_checkout" remove dirty >/dev/null 2>&1; then
+    fail 'wtree remove removed a worktree holding untracked files'
+fi
+run_wtree "$remove_checkout" remove --force dirty >/dev/null
+[[ ! -e "$remove_checkout/dirty" ]] || fail 'wtree remove --force left the dirty worktree behind'
+
+# --keep-branch removes the directory only.
+add_worktree "$remove_checkout" kept
+run_wtree "$remove_checkout" remove --keep-branch kept >/dev/null
+[[ ! -e "$remove_checkout/kept" ]] || fail 'wtree remove --keep-branch left the worktree behind'
+branch_exists_in "$remove_checkout" kept || fail 'wtree remove --keep-branch deleted the branch'
+
+# Guards.
+add_worktree "$remove_checkout" guarded
+if run_wtree "$remove_checkout" remove main >/dev/null 2>&1; then
+    fail 'wtree remove removed the default-branch worktree'
+fi
+if run_wtree "$remove_checkout/guarded" remove guarded >/dev/null 2>&1; then
+    fail 'wtree remove ran from inside the worktree it removes'
+fi
+if run_wtree "$remove_checkout" remove nosuch >/dev/null 2>&1; then
+    fail 'wtree remove accepted an unregistered worktree'
+fi
+if run_wtree "$remove_checkout" remove >/dev/null 2>&1; then
+    fail 'wtree remove ran without naming a worktree'
+fi
+run_wtree "$remove_checkout" remove guarded >/dev/null
+
+single_remove_checkout="$TMP_DIR/single-remove-checkout"
+clone_into "$single_remove_checkout" "$main_remote"
+if run_wtree "$single_remove_checkout" remove main >/dev/null 2>&1; then
+    fail 'wtree remove emptied a checkout of every worktree'
+fi
+
+if (
+    cd "$outside_root"
+    "$WTREE" remove anything
+) >/dev/null 2>&1; then
+    fail 'wtree remove ran outside a wtree checkout'
+fi
+
+# Removing the worktree the checkout root's agent configuration points at
+# repoints it, because the alternative is a root full of dangling links.
+add_worktree "$remove_checkout" linked
+commit_in "$remove_checkout/linked" linked.txt linked 'add linked'
+git -C "$remove_checkout/main" "${TEST_ID[@]}" merge --no-ff -m 'merge linked' linked >/dev/null
+git -C "$remove_checkout/main" push origin main >/dev/null 2>&1
+run_wtree "$remove_checkout" link linked >/dev/null
+[[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'linked/CLAUDE.md' ]] || fail 'the link fixture did not point at the linked worktree'
+
+run_wtree "$remove_checkout" remove linked >/dev/null
+[[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'main/CLAUDE.md' ]] || fail 'wtree remove did not repoint CLAUDE.md at the remaining worktree'
+[[ "$(readlink "$remove_checkout/.claude")" == 'main/.claude' ]] || fail 'wtree remove did not repoint .claude at the remaining worktree'
+[[ -f "$remove_checkout/CLAUDE.md" ]] || fail 'wtree remove left a dangling CLAUDE.md link at the checkout root'
+[[ "$(cat "$remove_checkout/CLAUDE.md")" == '# main instructions' ]] || fail 'the repointed link does not resolve to the remaining worktree'
+
+# With several worktrees left there is nothing to guess: the links are removed
+# so that wtree link can recreate them.
+add_worktree "$remove_checkout" ambiguous-one
+add_worktree "$remove_checkout" ambiguous-two
+run_wtree "$remove_checkout" link ambiguous-one >/dev/null
+run_wtree "$remove_checkout" remove ambiguous-one >/dev/null 2>&1
+no_agent_links "$remove_checkout" || fail 'wtree remove left agent configuration links pointing into a removed worktree'
+run_wtree "$remove_checkout" link ambiguous-two >/dev/null
+[[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'ambiguous-two/CLAUDE.md' ]] || fail 'wtree link could not recreate the links after a removal'
+run_wtree "$remove_checkout" remove ambiguous-two >/dev/null 2>&1
 
 printf 'wtree integration tests passed\n'

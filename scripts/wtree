@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.0"
+VERSION="0.5.0"
 BARE_DIR=".bare"
 REMOTE="origin"
 BRANCH=""
@@ -28,8 +28,13 @@ Commands:
                                repository and its first worktree.
   link [<worktree-dir>]        Link a worktree's agent configuration into the
                                checkout root so agents started there load it.
+  remove [options] <worktree-dir>
+                               Retire a worktree whose branch has landed:
+                               remove the directory, delete the local branch,
+                               and repoint the checkout root's agent
+                               configuration.
 
-Options:
+Clone options:
   -b, --branch <name>     Create the first worktree from this remote branch.
                            Defaults to the remote's default branch.
       --worktree-dir <path>
@@ -37,6 +42,16 @@ Options:
       --bare-dir <path>   Bare repository directory (default: .bare).
   -r, --remote <name>     Remote name to configure (default: origin).
       --no-link           Skip linking agent configuration after cloning.
+
+Remove options:
+      --base <ref>        Branch the work must have landed on
+                           (default: the remote's default branch).
+      --keep-branch       Remove the worktree but keep the local branch.
+      --force             Remove despite uncommitted, untracked or unlanded
+                           work. This discards it.
+  -n, --dry-run           Report what removal would do and change nothing.
+
+Common options:
   -h, --help              Show this help message.
   -V, --version           Show the version.
 
@@ -58,6 +73,9 @@ Examples:
   wtree clone --no-link <repo-url>
   wtree link
   wtree link dev
+  wtree remove --dry-run feature-export-csv
+  wtree remove feature-export-csv
+  wtree remove --base origin/dev --keep-branch feature-export-csv
 EOF
 }
 
@@ -68,6 +86,23 @@ error() {
 
 warn() {
     printf 'Warning: %s\n' "$*" >&2
+}
+
+join_with() {
+    local separator="$1"
+    shift
+
+    local result=""
+    local item
+
+    for item in "$@"; do
+        if [[ -z "$result" ]]; then
+            result="$item"
+        else
+            result="$result$separator$item"
+        fi
+    done
+    printf '%s\n' "$result"
 }
 
 require_option_value() {
@@ -221,13 +256,6 @@ select_branch() {
     done
 }
 
-remote_default_branch() {
-    local remote_head
-
-    remote_head="$(git symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD")" || return 1
-    printf '%s\n' "${remote_head#"$REMOTE/"}"
-}
-
 create_worktree() {
     WORKTREE_DIR="${WORKTREE_DIR:-${BRANCH##*/}}"
 
@@ -318,6 +346,68 @@ link_agent_config() {
     fi
 }
 
+checkout_remote() {
+    local checkout="$1"
+    local name
+    local remotes=()
+
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && remotes+=("$name")
+    done < <(git -C "$checkout" remote)
+
+    [[ ${#remotes[@]} -gt 0 ]] || return 1
+    for name in "${remotes[@]}"; do
+        [[ "$name" != "origin" ]] || { printf 'origin\n'; return 0; }
+    done
+    printf '%s\n' "${remotes[0]}"
+}
+
+checkout_default_branch() {
+    local checkout="$1"
+    local remote="$2"
+    local remote_head
+
+    remote_head="$(git -C "$checkout" symbolic-ref --quiet --short "refs/remotes/$remote/HEAD")" || return 1
+    printf '%s\n' "${remote_head#"$remote/"}"
+}
+
+# A branch has landed when the base already contains its work: either the tip is
+# an ancestor of the base, or the branch squashed onto the merge base carries a
+# patch already upstream. The second case is what squash and rebase merges leave
+# behind, and it is the case `git branch --merged` gets wrong.
+branch_landed() {
+    local checkout="$1"
+    local branch="$2"
+    local base="$3"
+    local merge_base tree probe verdict
+
+    git -C "$checkout" merge-base --is-ancestor "$branch" "$base" 2>/dev/null && return 0
+
+    merge_base="$(git -C "$checkout" merge-base "$base" "$branch" 2>/dev/null)" || return 1
+    tree="$(git -C "$checkout" rev-parse "$branch^{tree}" 2>/dev/null)" || return 1
+    probe="$(GIT_AUTHOR_NAME=wtree GIT_AUTHOR_EMAIL=wtree@localhost \
+        GIT_COMMITTER_NAME=wtree GIT_COMMITTER_EMAIL=wtree@localhost \
+        git -C "$checkout" commit-tree "$tree" -p "$merge_base" -m 'wtree squash probe' 2>/dev/null)" || return 1
+    verdict="$(git -C "$checkout" cherry "$base" "$probe" 2>/dev/null)" || return 1
+    [[ "${verdict%%$'\n'*}" == -* ]]
+}
+
+worktree_head_branch() {
+    local worktree_path="$1"
+
+    git -C "$worktree_path" symbolic-ref --quiet --short HEAD 2>/dev/null
+}
+
+unlink_agent_config() {
+    local checkout="$1"
+    shift
+
+    local name
+    for name in "$@"; do
+        rm -f -- "$checkout/$name"
+    done
+}
+
 cmd_link() {
     local worktree=""
     local checkout candidate found
@@ -368,6 +458,213 @@ cmd_link() {
     link_agent_config "$checkout" "$worktree"
 }
 
+cmd_remove() {
+    local worktree=""
+    local base=""
+    local keep_branch=0 force=0 dry_run=0 landed=0
+    local checkout candidate found worktree_path cwd remote default_branch branch status name target resolved
+    local dirs=() remaining=() relink=() problems=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            --base)
+                require_option_value "$1" "${2:-}"
+                base="$2"
+                shift 2
+                ;;
+            --base=*)
+                base="${1#*=}"
+                [[ -n "$base" ]] || error "Option --base requires a value."
+                shift
+                ;;
+            --keep-branch)
+                keep_branch=1
+                shift
+                ;;
+            --force)
+                force=1
+                shift
+                ;;
+            -n|--dry-run)
+                dry_run=1
+                shift
+                ;;
+            --)
+                shift
+                ;;
+            -*)
+                error "Unknown option: $1. Run 'wtree --help' for usage."
+                ;;
+            *)
+                [[ -z "$worktree" ]] || error "Expected exactly one worktree directory."
+                worktree="$1"
+                shift
+                ;;
+        esac
+    done
+
+    command -v git >/dev/null 2>&1 || error "Git is required but was not found in PATH."
+    [[ -n "$worktree" ]] || error "Missing worktree directory. Name the worktree to remove."
+    worktree="${worktree%/}"
+
+    checkout="$(resolve_checkout_root .)" || error "Not inside a wtree checkout: no ancestor bare repository was found."
+    worktree_path="$checkout/$worktree"
+
+    while IFS= read -r candidate; do
+        dirs+=("$candidate")
+    done < <(worktree_dirs "$checkout")
+
+    [[ ${#dirs[@]} -gt 0 ]] || error "No worktrees are registered in '$checkout'."
+
+    found=0
+    for candidate in "${dirs[@]}"; do
+        if [[ "$candidate" == "$worktree" ]]; then
+            found=1
+        else
+            remaining+=("$candidate")
+        fi
+    done
+
+    if (( found == 0 )); then
+        if git -C "$checkout" worktree list --porcelain | grep -qxF "worktree $worktree_path"; then
+            error "'$worktree' is registered but its directory is gone. Run: git -C $checkout worktree prune"
+        fi
+        error "'$worktree' is not a registered worktree (${dirs[*]})."
+    fi
+
+    [[ ${#remaining[@]} -gt 0 ]] || error "'$worktree' is the only registered worktree. A checkout keeps at least one."
+
+    cwd="$(pwd -P)"
+    if [[ "$cwd" == "$worktree_path" || "$cwd" == "$worktree_path"/* ]]; then
+        error "Run 'wtree remove' from outside '$worktree'. The checkout root works: cd $checkout"
+    fi
+
+    branch="$(worktree_head_branch "$worktree_path")" || branch=""
+    remote="$(checkout_remote "$checkout")" || remote=""
+
+    if [[ -n "$remote" ]]; then
+        default_branch="$(checkout_default_branch "$checkout" "$remote")" || default_branch=""
+    else
+        default_branch=""
+    fi
+
+    if [[ -n "$branch" && -n "$default_branch" && "$branch" == "$default_branch" ]]; then
+        error "'$worktree' holds the remote's default branch ($branch). Merges land there; keep it."
+    fi
+
+    if [[ -z "$base" && -n "$remote" && -n "$default_branch" ]]; then
+        base="$remote/$default_branch"
+    fi
+
+    if [[ -n "$branch" ]]; then
+        if [[ -z "$base" ]]; then
+            error "Could not resolve a base branch for '$branch'. Pass --base <ref>."
+        fi
+        git -C "$checkout" rev-parse --verify --quiet "$base" >/dev/null || error "Base ref '$base' does not exist."
+        if branch_landed "$checkout" "$branch" "$base"; then
+            landed=1
+        fi
+    fi
+
+    status="$(git -C "$worktree_path" status --porcelain)" || status=""
+    [[ -z "$status" ]] || problems+=("uncommitted or untracked changes")
+    if [[ -n "$branch" ]] && (( landed == 0 )); then
+        problems+=("commits that have not landed on $base")
+    fi
+
+    if [[ ${#problems[@]} -gt 0 ]] && (( force == 0 )); then
+        printf "Refusing to remove '%s': it holds %s.\n" "$worktree" "$(join_with ' and ' "${problems[@]}")" >&2
+        [[ -z "$status" ]] || git -C "$worktree_path" status --short >&2
+        if [[ -n "$branch" ]] && (( landed == 0 )); then
+            git -C "$checkout" log --oneline --no-decorate "$base..$branch" >&2 || true
+        fi
+        error "Keep the work, or pass --force to discard it."
+    fi
+
+    for name in "${AGENT_CONFIG_ENTRIES[@]}"; do
+        target="$checkout/$name"
+        [[ -L "$target" ]] || continue
+        resolved="$(resolve_link_target "$target")" || continue
+        [[ "$resolved" == "$worktree_path" || "$resolved" == "$worktree_path"/* ]] || continue
+        relink+=("$name")
+    done
+
+    if (( dry_run == 1 )); then
+        printf "Would remove worktree '%s'" "$worktree"
+        if [[ -z "$branch" ]]; then
+            printf ' (detached HEAD).\n'
+        else
+            printf ' (branch %s).\n' "$branch"
+        fi
+        if [[ -n "$branch" ]]; then
+            if (( landed == 1 )); then
+                printf '  %s has landed on %s\n' "$branch" "$base"
+            else
+                printf '  %s has NOT landed on %s\n' "$branch" "$base"
+            fi
+            if (( keep_branch == 1 )); then
+                printf '  would keep the local branch (--keep-branch)\n'
+            else
+                printf '  would delete the local branch\n'
+            fi
+        fi
+        [[ -z "$status" ]] || printf '  would discard uncommitted or untracked changes (--force)\n'
+        if [[ ${#relink[@]} -gt 0 ]]; then
+            if [[ ${#remaining[@]} -eq 1 ]]; then
+                printf '  would repoint %s at %s/\n' "$(join_with ', ' "${relink[@]}")" "${remaining[0]}"
+            else
+                printf '  would unlink %s and leave the checkout root without agent configuration\n' "$(join_with ', ' "${relink[@]}")"
+            fi
+        fi
+        printf '  the remote branch is never touched\n'
+        printf 'Nothing was changed (--dry-run).\n'
+        return 0
+    fi
+
+    if (( force == 1 )); then
+        git -C "$checkout" worktree remove --force "$worktree_path"
+    else
+        git -C "$checkout" worktree remove "$worktree_path"
+    fi
+    printf 'Removed worktree %s/\n' "$worktree"
+
+    if [[ ${#relink[@]} -gt 0 ]]; then
+        unlink_agent_config "$checkout" "${relink[@]}"
+        if [[ ${#remaining[@]} -eq 1 ]]; then
+            link_agent_config "$checkout" "${remaining[0]}"
+        else
+            warn "Unlinked $(join_with ', ' "${relink[@]}") from the checkout root: they pointed into $worktree/."
+            for candidate in "${remaining[@]}"; do
+                printf '  wtree link %s\n' "$candidate" >&2
+            done
+        fi
+    fi
+
+    if (( keep_branch == 1 )); then
+        [[ -z "$branch" ]] || printf 'Kept branch %s.\n' "$branch"
+    elif [[ -n "$branch" ]]; then
+        if git -C "$checkout" branch -d "$branch" >/dev/null 2>&1; then
+            printf 'Deleted branch %s.\n' "$branch"
+        elif (( landed == 1 )); then
+            git -C "$checkout" branch -D "$branch" >/dev/null
+            printf 'Deleted branch %s: its work is on %s as a squashed or rebased commit.\n' "$branch" "$base"
+        elif (( force == 1 )); then
+            git -C "$checkout" branch -D "$branch" >/dev/null
+            printf 'Deleted unlanded branch %s (--force).\n' "$branch"
+        else
+            warn "Left branch '$branch' in place: Git refused to delete it."
+        fi
+    fi
+
+    git -C "$checkout" worktree prune
+
+    printf 'Remaining worktrees: %s\n' "$(join_with ', ' "${remaining[@]}")"
+}
+
 main() {
     case "${1:-}" in
         -h|--help)
@@ -384,6 +681,11 @@ main() {
         link)
             shift
             cmd_link "$@"
+            exit 0
+            ;;
+        remove)
+            shift
+            cmd_remove "$@"
             exit 0
             ;;
         '')
@@ -408,7 +710,7 @@ main() {
     git remote set-head "$REMOTE" --auto 2>/dev/null || true
 
     if [[ -z "$BRANCH" ]]; then
-        if ! BRANCH="$(remote_default_branch)"; then
+        if ! BRANCH="$(checkout_default_branch "$PWD" "$REMOTE")"; then
             select_branch
         fi
     fi
