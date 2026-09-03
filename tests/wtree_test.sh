@@ -93,8 +93,9 @@ clone_into "$main_checkout" "$main_remote"
 nested_remote="$(create_remote nested dev/MAIN)"
 nested_checkout="$TMP_DIR/nested-checkout"
 clone_into "$nested_checkout" "$nested_remote"
-[[ -d "$nested_checkout/MAIN" ]] || fail 'nested default branch did not use its basename'
-[[ "$(git -C "$nested_checkout/MAIN" branch --show-current)" == 'dev/MAIN' ]] || fail 'nested default branch was not checked out'
+[[ -d "$nested_checkout/dev/MAIN" ]] || fail 'nested default branch did not mirror its branch path'
+[[ ! -e "$nested_checkout/MAIN" ]] || fail 'nested default branch was flattened to its basename'
+[[ "$(git -C "$nested_checkout/dev/MAIN" branch --show-current)" == 'dev/MAIN' ]] || fail 'nested default branch was not checked out'
 [[ "$(git -C "$nested_checkout/.bare" symbolic-ref --short refs/remotes/origin/HEAD)" == 'origin/dev/MAIN' ]] || fail 'nested origin default branch was not recorded'
 
 custom_checkout="$TMP_DIR/custom-checkout"
@@ -363,5 +364,25 @@ no_agent_links "$remove_checkout" || fail 'wtree remove left agent configuration
 run_wtree "$remove_checkout" link ambiguous-two >/dev/null
 [[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'ambiguous-two/CLAUDE.md' ]] || fail 'wtree link could not recreate the links after a removal'
 run_wtree "$remove_checkout" remove ambiguous-two >/dev/null 2>&1
+
+# A slashed branch lives at the branch's path, is named by that whole path in
+# every command, and takes its emptied namespace directory with it.
+add_worktree "$remove_checkout" feat/nested
+[[ -d "$remove_checkout/feat/nested" ]] || fail 'a slashed branch did not produce a nested worktree directory'
+commit_in "$remove_checkout/feat/nested" nested.txt nested 'add nested'
+git -C "$remove_checkout/main" "${TEST_ID[@]}" merge --no-ff -m 'merge nested' feat/nested >/dev/null
+git -C "$remove_checkout/main" push origin main >/dev/null 2>&1
+
+run_wtree "$remove_checkout" link feat/nested >/dev/null
+[[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'feat/nested/CLAUDE.md' ]] || fail 'wtree link did not accept a nested worktree path'
+
+nested_dry_run="$(run_wtree "$remove_checkout" remove --dry-run feat/nested)"
+[[ "$nested_dry_run" == *'has landed on origin/main'* ]] || fail 'wtree remove --dry-run did not report the nested branch as landed'
+
+run_wtree "$remove_checkout" remove feat/nested >/dev/null
+[[ ! -e "$remove_checkout/feat/nested" ]] || fail 'wtree remove left the nested worktree behind'
+[[ ! -e "$remove_checkout/feat" ]] || fail 'wtree remove left the emptied parent directory behind'
+! branch_exists_in "$remove_checkout" feat/nested || fail 'wtree remove left the nested branch behind'
+[[ "$(readlink "$remove_checkout/CLAUDE.md")" == 'main/CLAUDE.md' ]] || fail 'wtree remove did not repoint the links after removing a nested worktree'
 
 printf 'wtree integration tests passed\n'

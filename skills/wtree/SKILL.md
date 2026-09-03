@@ -9,10 +9,18 @@ description: Use ONLY for `/wtree` requests or when the current directory is ins
 
 ```text
 checkout/
-  .bare/       # shared bare Git repository
-  main/        # initial worktree
-  feature-x/   # additional worktree
+  .bare/                 # shared bare Git repository
+  main/                  # initial worktree
+  feat/
+    export-csv/          # worktree for branch feat/export-csv
+  BSV-1/
+    export-csv/          # worktree for ticket branch BSV-1/export-csv
 ```
+
+A worktree directory is the branch name, path separators included. A branch
+never becomes a flattened `feat-export-csv/`, so the directory tree reads as the
+branch list and every command that names a worktree takes the branch name
+verbatim.
 
 ## Detect A wtree Checkout
 
@@ -98,8 +106,8 @@ git -C <checkout>/.bare branch --all --no-color
 git -C <checkout>/.bare log --all --format='%D' -30
 ```
 
-3. If instructions or established branches define a convention, follow it. Otherwise derive a short, sanitized descriptive proposal from the requested feature, such as `feature-export-csv`.
-4. Propose both the branch name and the sibling worktree directory to the user. Derive the directory from the branch name with path separators replaced by `-` unless project conventions specify otherwise. Wait for the user's confirmation before creating a new worktree.
+3. If instructions or established branches define a convention, follow it — a ticket convention (`BSV-1/export-csv`) and a type prefix convention (`feat/export-csv`) both survive the mapping to a directory unchanged. Otherwise derive a short, sanitized descriptive proposal from the requested feature, such as `feat/export-csv`. When a ticket identifier is known, lead with it.
+4. Propose both the branch name and the sibling worktree directory to the user. **The directory is the branch name unchanged**: `feat/export-csv` lives in `<checkout>/feat/export-csv/`, and the ticket branch `BSV-1/export-csv` lives in `<checkout>/BSV-1/export-csv/`. Never flatten `/` to `-`, and do not shorten the branch to its basename — that collides as soon as two tickets share a trailing word. The intermediate directory (`feat/`, `BSV-1/`) is created as needed and holds no worktree of its own. Wait for the user's confirmation before creating a new worktree.
 5. Fetch the selected remote, resolve its default branch, and create the confirmed branch from that remote-tracking ref. Use the checkout's configured remote name (`origin` unless the clone used another name):
 
 ```bash
@@ -195,7 +203,7 @@ Run the explicit clone command from the parent directory where the checkout shou
 wtree clone [--branch <name>] [--worktree-dir <path>] [--bare-dir <path>] [--remote <name>] <repo-url> [<directory>]
 ```
 
-Without `<directory>`, it creates a child directory named after the repository URL (without a trailing `.git`); provide one to choose the checkout location. Without `--branch`, it uses the remote's default branch. If no default branch is available, it offers the fetched remote branches interactively; supply `--branch` when non-interactive execution is required. The initial worktree directory defaults to the branch basename, so `dev/MAIN` creates `MAIN/`; override it with `--worktree-dir`. Never run `wtree clone` inside an existing repository or worktree.
+Without `<directory>`, it creates a child directory named after the repository URL (without a trailing `.git`); provide one to choose the checkout location. Without `--branch`, it uses the remote's default branch. If no default branch is available, it offers the fetched remote branches interactively; supply `--branch` when non-interactive execution is required. The initial worktree directory defaults to the branch name, so `dev/MAIN` creates `dev/MAIN/`; override it with `--worktree-dir` when the first worktree should sit at the checkout root, for example `--worktree-dir MAIN`. Never run `wtree clone` inside an existing repository or worktree.
 
 ## Manage Worktrees
 
@@ -203,8 +211,10 @@ Run Git worktree operations through the shared bare repository. Replace `<checko
 
 ```bash
 git -C <checkout>/.bare worktree list
-git -C <checkout>/.bare worktree add -b <branch> <checkout>/<branch> <start-point>
+git -C <checkout>/.bare worktree add -b <branch> <checkout>/<branch> <start-point>   # <branch> names both
 git -C <checkout>/.bare worktree prune
 ```
+
+Name a nested worktree by its full path in every command: `wtree link feat/export-csv`, `wtree remove feat/export-csv`. `wtree remove` also removes the parent directory (`feat/`) when the removal empties it.
 
 Retire a finished worktree with `wtree remove` — see **Retire A Completed Worktree**. Reach for `git -C <checkout>/.bare worktree remove` only for what `wtree remove` deliberately refuses, such as emptying a checkout of its last worktree, and say why the refusal is being bypassed. Use normal Git commands from the selected worktree for status, commits, fetches, merges, and pushes.

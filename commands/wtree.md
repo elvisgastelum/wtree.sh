@@ -19,4 +19,6 @@ Run `wtree clone` from the parent directory. For a bare `/wtree clone <repo-url>
 
 After cloning, report the checkout directory, the initial worktree directory, and that the shared bare Git repository is `<checkout>/.bare`. Do not use `wtree clone` inside an existing repository.
 
+A worktree directory is its branch name, path separators included: the branch `feat/export-csv` produces `<checkout>/feat/export-csv/`, not `feat-export-csv/`. Pass that whole path wherever a `<worktree-dir>` is expected.
+
 For `remove`, require a worktree directory. Run `wtree remove --dry-run <worktree-dir>` first from the checkout root, show the user exactly what it reports, and wait for confirmation before running it again without `--dry-run`. Report a refusal with what it named rather than working around it; add `--force` only when the user says to, because it discards the work the refusal protects. See the **Retire A Completed Worktree** section of the wtree skill.

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.5.0"
+VERSION="0.6.0"
 BARE_DIR=".bare"
 REMOTE="origin"
 BRANCH=""
@@ -38,7 +38,8 @@ Clone options:
   -b, --branch <name>     Create the first worktree from this remote branch.
                            Defaults to the remote's default branch.
       --worktree-dir <path>
-                           First worktree directory (default: branch basename).
+                           First worktree directory (default: the branch name,
+                           so dev/MAIN becomes dev/MAIN/).
       --bare-dir <path>   Bare repository directory (default: .bare).
   -r, --remote <name>     Remote name to configure (default: origin).
       --no-link           Skip linking agent configuration after cloning.
@@ -58,6 +59,11 @@ Common options:
 Without --branch, wtree uses the remote's default branch. If no default branch
 is available, it prompts for a remote branch.
 
+A worktree directory mirrors its branch name, path separators included, so the
+branch feat/export-csv lives in feat/export-csv/ and BSV-1/export-csv lives in
+BSV-1/export-csv/. Removing such a worktree also removes the parent directories
+it leaves empty.
+
 After cloning, wtree links the new worktree's agent configuration into the
 checkout root so an agent started there loads it. Only files that exist are
 linked, an existing regular file is never replaced, and a repository without
@@ -73,9 +79,9 @@ Examples:
   wtree clone --no-link <repo-url>
   wtree link
   wtree link dev
-  wtree remove --dry-run feature-export-csv
-  wtree remove feature-export-csv
-  wtree remove --base origin/dev --keep-branch feature-export-csv
+  wtree remove --dry-run feat/export-csv
+  wtree remove feat/export-csv
+  wtree remove --base origin/dev --keep-branch feat/export-csv
 EOF
 }
 
@@ -257,7 +263,9 @@ select_branch() {
 }
 
 create_worktree() {
-    WORKTREE_DIR="${WORKTREE_DIR:-${BRANCH##*/}}"
+    # The directory mirrors the branch name so that listing the checkout reads
+    # as a list of branches: feat/export-csv lives in feat/export-csv/.
+    WORKTREE_DIR="${WORKTREE_DIR:-$BRANCH}"
 
     branch_exists "$BRANCH" || error "Branch '$BRANCH' does not exist on remote '$REMOTE'."
     mkdir -p -- "$(dirname "$WORKTREE_DIR")"
@@ -396,6 +404,22 @@ worktree_head_branch() {
     local worktree_path="$1"
 
     git -C "$worktree_path" symbolic-ref --quiet --short HEAD 2>/dev/null
+}
+
+# A branch-shaped worktree leaves its namespace directories behind: removing
+# feat/export-csv/ leaves an empty feat/. Drop those, and stop at the first
+# directory that is not empty or is the checkout root itself.
+prune_empty_parents() {
+    local checkout="$1"
+    local worktree="$2"
+    local dir
+
+    dir="$(dirname -- "$worktree")"
+    while [[ "$dir" != '.' && "$dir" != '/' && "$dir" != "$worktree" ]]; do
+        rmdir -- "$checkout/$dir" 2>/dev/null || return 0
+        worktree="$dir"
+        dir="$(dirname -- "$dir")"
+    done
 }
 
 unlink_agent_config() {
@@ -630,6 +654,7 @@ cmd_remove() {
     else
         git -C "$checkout" worktree remove "$worktree_path"
     fi
+    prune_empty_parents "$checkout" "$worktree"
     printf 'Removed worktree %s/\n' "$worktree"
 
     if [[ ${#relink[@]} -gt 0 ]]; then

@@ -4,10 +4,17 @@
 
 ```text
 checkout/
-  .bare/       # shared bare Git repository
-  main/        # initial worktree
-  feature-x/   # additional worktree
+  .bare/                 # shared bare Git repository
+  main/                  # initial worktree
+  feat/
+    export-csv/          # worktree for branch feat/export-csv
+  BSV-1/
+    export-csv/          # worktree for ticket branch BSV-1/export-csv
 ```
+
+A worktree directory is its branch name, path separators and all. A branch never
+becomes a flattened `feat-export-csv/`, so the directory tree reads as the branch
+list, and every command that names a worktree takes the branch name verbatim.
 
 ## Install
 
@@ -68,7 +75,7 @@ Options:
 ```text
 -b, --branch <name>     First worktree branch.
     --worktree-dir <path>
-                        First worktree directory (default: branch basename).
+                        First worktree directory (default: the branch name).
     --bare-dir <path>   Bare repository directory (default: .bare).
 -r, --remote <name>     Remote name (default: origin).
     --no-link           Skip linking agent configuration after cloning.
@@ -76,10 +83,10 @@ Options:
 -V, --version           Show the version.
 ```
 
-For a default branch named `dev/MAIN`, the initial worktree is `MAIN/`. Use `--worktree-dir` to override that name:
+For a default branch named `dev/MAIN`, the initial worktree is `dev/MAIN/`. Use `--worktree-dir` to put it somewhere else:
 
 ```bash
-wtree clone --branch dev/MAIN --worktree-dir dev-main <repo-url>
+wtree clone --branch dev/MAIN --worktree-dir MAIN <repo-url>
 ```
 
 If the remote has no default branch, `wtree` offers its remote branches interactively. Non-interactive callers must pass `--branch` in that case.
@@ -91,7 +98,7 @@ individual worktree directories:
 
 ```bash
 git -C .bare worktree list
-git -C .bare worktree add -b feature-x ../feature-x main
+git -C .bare worktree add -b feat/export-csv ../feat/export-csv main
 ```
 
 ## Remove
@@ -102,8 +109,8 @@ agent configuration, and prunes.
 
 ```bash
 cd checkout
-wtree remove --dry-run feature-x   # report what removal would do, change nothing
-wtree remove feature-x
+wtree remove --dry-run feat/export-csv   # report what removal would do, change nothing
+wtree remove feat/export-csv
 ```
 
 Options:
@@ -130,7 +137,7 @@ branch is never touched; deleting it stays a deliberate `git push --delete`.
 For anything `wtree remove` deliberately refuses, the raw commands are still there:
 
 ```bash
-git -C .bare worktree remove ../feature-x
+git -C .bare worktree remove ../feat/export-csv
 git -C .bare worktree prune
 ```
 
@@ -189,7 +196,7 @@ When the user says a branch's work is done, the agent proposes `wtree remove --d
 shows what it reports, and waits for confirmation before the real run. It never scans for landed
 branches on its own and never passes `--force` unless told to.
 
-For a new feature, the agent first checks project instructions and existing branches for naming conventions. It then suggests a sanitized branch name and sibling worktree directory, such as `feature-export-csv/`, and waits for confirmation before creating it. Project conventions take precedence over the suggested fallback name.
+For a new feature, the agent first checks project instructions and existing branches for naming conventions. It then suggests a branch name and the matching worktree directory — the branch name unchanged, so `feat/export-csv` becomes `feat/export-csv/` and the ticket branch `BSV-1/export-csv` becomes `BSV-1/export-csv/` — and waits for confirmation before creating it. Project conventions take precedence over the suggested fallback name.
 
 The agent creates confirmed worktrees through `.bare`, bases them on the configured remote's default branch, and performs edits, commits, pulls, and pushes only from the selected sibling worktree. The checkout root and `.bare/` are never treated as source working directories.
 
